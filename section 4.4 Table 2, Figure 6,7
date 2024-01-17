@@ -72,9 +72,6 @@ print(summary_w)
 ci_lower=sapply(results, function(p) quantile(p$x, probs = 0.025))
 ci_upper=sapply(results, function(p) quantile(p$x, probs = 0.975))
 
-# 将置信区间限制在7.8以下
-#ci_lower= pmin(ci_lower, 7.8)
-#ci_upper= pmin(ci_upper, 7.8)
 
 # 添加置信区间到数据框
 df$ci_lower=ci_lower
