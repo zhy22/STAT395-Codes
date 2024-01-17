@@ -44,7 +44,7 @@ y$date <- as.Date(y$date, format="%d/%m/%Y")
 results=pf(y[,2], N)
 
 
-
+##############################################################################Table 2
 # 提取最后时间点的粒子
 last_particles=results[[length(y)]]
 
@@ -67,7 +67,50 @@ print(summary_w)
 
 
 
+###################################################################################Figure 7
+# 计算95%置信区间
+ci_lower=sapply(results, function(p) quantile(p$x, probs = 0.025))
+ci_upper=sapply(results, function(p) quantile(p$x, probs = 0.975))
 
+# 将置信区间限制在7.8以下
+#ci_lower= pmin(ci_lower, 7.8)
+#ci_upper= pmin(ci_upper, 7.8)
+
+# 添加置信区间到数据框
+df$ci_lower=ci_lower
+df$ci_upper=ci_upper
+
+
+ggplot(df) +
+  geom_line(aes(x = time, y = observed_state, colour = "Observed State"), linetype = "dashed") +
+  geom_line(aes(x = time, y = estimated_states, colour = "Estimated State")) +
+  geom_ribbon(aes(x = time, ymin = ci_lower, ymax = ci_upper, fill = "Confidence Interval"), alpha = 0.2) +
+  ggtitle("Comparison of Observed and Estimated States with 95% Confidence Interval") +
+  xlab("Time") + ylab("State") +
+  scale_colour_manual("", 
+                      values = c("Observed State" = "blue", "Estimated State" = "red")) +
+  scale_fill_manual("", 
+                    values = c("Confidence Interval" = "red")) +
+  theme_minimal() +
+  ylim(7.55,7.95) +
+  guides(colour = guide_legend(title = ""), fill = guide_legend(title = ""))
+
+
+##################################################################################Figure 7
+library(ggplot2)
+library(ggpubr)
+
+# 计算估计值和观测值的分位数
+qq_data=qqplot(df$observed_state, df$estimated_state, plot.it = FALSE)
+qq_df=data.frame(observed_quantiles = qq_data$x, estimated_quantiles = qq_data$y)
+
+# 绘制QQ图
+ggplot(qq_df, aes(x = observed_quantiles, y = estimated_quantiles)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "blue") +
+  ggtitle("QQ Plot of Observed vs. Estimated States") +
+  xlab("Quantiles of Observed State") + ylab("Quantiles of Estimated State") +
+  theme_minimal()
 
 
 
