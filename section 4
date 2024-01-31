@@ -1,0 +1,275 @@
+
+############################################################################
+Load the readme RData file first and can directly run any of the codes here#
+############################################################################
+
+
+
+
+
+
+
+add_re <- function(particles, epsilon_N) {
+  # 在这里，epsilon_N 控制了扰动的程度
+  # 扰动核的部分 epsilon_N * κ_N^θ' 添加随机性
+  if (!is.null(epsilon_N)) {
+    # 选择要扰动的粒子索引
+    jittered_indices <- which(runif(nrow(particles)) < epsilon_N)
+    
+    # 对选中的粒子应用截断高斯扰动
+    # 注意：这里使用了截断高斯分布的假设，即参数的扰动量应保持在参数的支撑空间内
+    particles$phi[re_indices] <- rtruncnorm(length(re_indices), a = -1, b = 1, mean = particles$phi[re_indices], sd = epsilon_N)
+    particles$tau[re_indices] <- rtruncnorm(length(re_indices), a = 0, b = Inf, mean = particles$tau[re_indices], sd = epsilon_N)
+    particles$w[re_indices] <- rtruncnorm(length(re_indices), a = 0, b =2000, mean = particles$w[re_indices], sd = epsilon_N)
+  }
+  return(particles)
+}
+
+
+pf = function(y, N, resampling_threshold) {
+  # Initialize particles
+  particles = data.frame(
+    phi = rtruncnorm(N, a = -1, b = 1, mean = 0, sd =0.2),
+    tau = rgamma(N, 21, 1),
+    w = runif(N,0,2000),
+    x = 0
+  )
+  
+  updated.particles = list()
+  unique.counts = list(phi = vector("list", length(y)), 
+                       tau = vector("list", length(y)), 
+                       w = vector("list", length(y)))
+  
+  # Iterating over each time point
+  for (t in 1:length(y)) {
+    # Update particles
+    epsilon = rnorm(N, 0, sqrt(1/particles$tau))
+    particles$x = particles$phi*particles$x+epsilon
+    
+    # Calculate likelihood weights
+    weights = dnorm(y[t], mean = particles$x, sd = sqrt(1 / particles$w))
+    weights = weights / sum(weights)
+    
+    # Calculate Effective Sample Size
+    #ESS = 1 / sum(weights^2)
+    
+    # Conditional resampling
+    #index <- residual_resampling(weights)
+    #particles <- particles[index, ]
+    index=sample(1:N, N, replace = TRUE, prob = weights)
+    particles=particles[index, ]
+    # 添加扰动
+    particles=add_re(particles,1/sqrt(5000))
+    
+    # Store updated particles
+    updated.particles[[t]] = particles
+    
+    # Count unique particles for each parameter
+    unique.counts$phi[[t]] = length(unique(particles$phi))
+    unique.counts$tau[[t]] = length(unique(particles$tau))
+    unique.counts$w[[t]] = length(unique(particles$w))
+  }
+  
+  return(list(particles = updated.particles, counts = unique.counts))
+}
+
+# Example usage
+N = 5000 # Number of particles
+set.seed(5090)
+resultspf = pf(results$residual, N)
+View(resultspf$counts)
+
+mean_x_over_time <- sapply(resultspf$particles, function(p) mean(p$x))
+
+# Assuming y is your observed data
+plot(residuals, type = 'l', col = 'blue', xlab = "Time", ylab = "Value")
+lines(mean_x_over_time, col = 'red')
+legend("topright", legend = c("Observed", "Estimated"), col = c("blue", "red"), lty = 1)
+
+
+
+
+
+
+
+
+############################################################################################################
+
+
+
+
+
+
+
+
+
+library(lhs)
+
+# 修改粒子滤波器以接受单个 w 值
+pf2 <- function(y, N, w) {
+  particles = data.frame(
+    phi = exp(rtruncnorm(N, a = -1, b = 1, mean = 0, sd = 0.2)),
+    tau = rgamma(N, 21,1),
+    w = rep(w, N),
+    x = 0
+  )
+  
+  updated.particles = list()
+  
+  # Iterating over each time point
+  for (t in 1:length(y)) {
+    # Update particles
+    epsilon = rnorm(N, 0, sqrt(1 / particles$tau))
+    particles$x = particles$phi * particles$x + epsilon
+    
+    # Calculate likelihood weights
+    weights = dnorm(y[t], mean = particles$x, sd = sqrt(1 / particles$w))
+    weights = weights / sum(weights)
+    
+    # Resampling
+    index = sample(1:N, N, replace = TRUE, prob = weights)
+    particles = particles[index, ]
+    
+    # Store updated particles
+    updated.particles[[t]] = particles
+  }
+  
+  return(updated.particles)
+}
+library(lhs)
+set.seed(500)
+# 生成拉丁超立方抽样样本
+num_samples <- 5  # 设置样本数量
+w_samples <- randomLHS(num_samples, 1) * 2500  # 假设 w 的范围是 [0, 2000]
+
+# 为每个 LHS 样本运行粒子滤波器
+estimates <- sapply(w_samples, function(w_sample) {
+  results <- pf2(residuals,1000, w_sample)
+  sapply(results, function(p) mean(p$x))
+})
+
+# 假设 true_values 包含真实数据
+# estimates 是之前获得的模型预测结果
+
+# 计算 MSE 和 MAE
+mse_values <- sapply(estimates, function(prediction) mean((prediction - residuals)^2))
+mae_values <- sapply(estimates, function(prediction) mean(abs(prediction -residuals)))
+
+# 准备绘图数据
+plot_data <- data.frame(w = w_samples, MSE = mse_values, MAE = mae_values)
+
+# 使用 ggplot2 绘制图像
+library(ggplot2)
+
+# 绘制 MSE 的竖线直方图
+ggplot(plot_data, aes(x = w, y = MSE)) +
+  geom_point() +
+  theme_minimal() +
+  ggtitle("MSE vs w")
+
+# 绘制 MAE 的竖线直方图
+ggplot(plot_data, aes(x = w, y = MAE)) +
+  geom_point() +
+  theme_minimal() +
+  ggtitle("MAE vs w")
+
+
+
+
+
+##############################################################################################
+
+# 计算95%置信区间
+ci_lower <- sapply(resultspf$particles, function(p) quantile(p$x, probs = 0.025))
+ci_upper <- sapply(resultspf$particles, function(p) quantile(p$x, probs = 0.975))
+
+# 将置信区间限制在7.8以下
+#ci_lower <- pmin(ci_lower, 7.8)
+#ci_upper <- pmin(ci_upper, 7.8)
+
+# 添加置信区间到数据框
+df$ci_lower <- ci_lower
+df$ci_upper <- ci_upper
+
+
+ggplot(df) +
+  geom_line(aes(x = time, y = actual, colour = "Observed State"), linetype = "dashed") +
+  geom_line(aes(x = time, y = estimated_state+predicted, colour = "Estimated State")) +
+  geom_ribbon(aes(x = time, ymin = ci_lower+estimated_state+predicted, ymax = ci_upper+estimated_state+predicted, fill = "Confidence Interval"), alpha = 0.2) +
+  ggtitle("Comparison of Observed and Estimated States with 95% Confidence Interval") +
+  xlab("Time") + ylab("State") +
+  scale_colour_manual("", 
+                      values = c("Observed State" = "blue", "Estimated State" = "red")) +
+  scale_fill_manual("", 
+                    values = c("Confidence Interval" = "red")) +
+  theme_minimal() +
+  guides(colour = guide_legend(title = ""), fill = guide_legend(title = ""))
+
+
+
+library(ggplot2)
+library(ggpubr)
+
+# 计算估计值和观测值的分位数
+qq_data <- qqplot(df$residual, df$estimated_state, plot.it = FALSE)
+qq_df <- data.frame(observed_quantiles = qq_data$x, estimated_quantiles = qq_data$y)
+
+# 绘制QQ图
+ggplot(qq_df, aes(x = observed_quantiles, y = estimated_quantiles)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "blue") +
+  ggtitle("QQ Plot of Observed vs. Estimated States") +
+  xlab("Quantiles of Observed State") + ylab("Quantiles of Estimated State") +
+  theme_minimal()
+
+#####################################################################################################
+
+y=na.omit(y)
+y$date_numeric <- as.numeric(y$date)
+library(mgcv)
+gam_model <- gam(log(y$value) ~ s(y$date_numeric,sp=0.04), data = y)
+plot(predict(gam_model),type = 'l',col='red')
+lines(y[,2])
+predictions=(predict(gam_model))
+residuals <- residuals.gam(gam_model)
+results <- data.frame(time=y$date, actual=y$value, predicted=predictions, residual=residuals)
+plot(results$time, results$residual, type="l", main="Residuals over Time", xlab="Time", ylab="Residuals")
+
+
+
+############################################################################################################################
+
+# 假定已经运行了 pf 函数并存储了其结果
+# 例如：
+# resultspf = pf(y, N, resampling_threshold)
+
+# 提取最后时间点的粒子
+# 这里我们假设 resultspf 是 pf 函数的返回值
+last_particles <- resultspf$particles[[length(y)]]
+
+# 计算每个参数的后验统计量的函数
+posterior_summary <- function(particles, param) {
+  mean_val <- mean(particles[[param]])
+  sd_val <- sd(particles[[param]])
+  ci <- quantile(particles[[param]], probs = c(0.025, 0.975))
+  list(mean = mean_val, sd = sd_val, ci = ci)
+}
+
+# 为每个参数计算后验统计量
+summary_phi <- posterior_summary(last_particles, "phi")
+summary_tau <- posterior_summary(last_particles, "tau")
+summary_w <- posterior_summary(last_particles, "w")
+
+# 打印统计量
+print(summary_phi)
+print(summary_tau)
+print(summary_w)
+
+
+
+
+
+
+
+
+
