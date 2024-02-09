@@ -178,6 +178,23 @@ filter=ParticleFilter$new(N=10^6, y=c(5, 2, 3, 1, 5), tau0=0.2, mu0=13)
 filter$plotDistributions()
 filter$plotUniqueParticles()
 
+plotUniqueParticlesCombined <- function(..., labels, legendSize=1.5) {
+  filters <- list(...)
+  colors <- rainbow(length(filters))
+  plot(0,0,type="n", xlim=c(0, max(sapply(filters, function(f) length(f$y)))), ylim=c(0, max(sapply(filters, function(f) max(sapply(f$mup1.list, function(x) length(unique(x))))))), xlab='Number of Observations', ylab='Number of Unique Particles', main='Unique Particles Across Different Priors')
+  
+  for (i in seq_along(filters)) {
+    filter <- filters[[i]]
+    upcount <- sapply(filter$mup1.list, function(x) length(unique(x)))
+    lines(0:(length(filter$y)), upcount, type='b', pch=16, col=colors[i], lwd=2)
+  }
+  
+  legend("topright", legend=labels, col=colors, lty=1, lwd=2, cex=legendSize)
+}
+
+# 使用修改后的函数，并指定图例文字大小
+plotUniqueParticlesCombined(filter1, filter2, filter3, labels=c("Prior 1", "Prior 2", "Prior 3"), legendSize=1.5)
+
 
 ##############################################################################################################section 3.2
 
