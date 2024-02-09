@@ -1,0 +1,354 @@
+
+##########################################################################################
+###########settings can be adjusted#######################################################
+####################################################################################section 3.1
+
+
+
+set.seed(9745)
+
+N=10^6
+mup1=rnorm(N, mean=-13, sd=sqrt(10^1))
+weights=rep(1/N, N)
+y=c(5, 2, 3, 1, 5)
+
+tau0=0.2;mu0=2
+post.mn=post.tau=numeric(6)
+post.mn[1]=mu0;post.tau[1]=tau0
+
+# Used to save the particle distribution after each iteration
+mup1.list=list(mup1)
+
+par(mfrow=c(3, 2))
+
+for (i in 1:length(y)) {
+  data=y[i]
+  likelihood=dnorm(data, mean=mup1, sd=1)
+  weights=weights*likelihood
+  weights=weights/sum(weights)
+  indices=sample(1:N, N, replace=TRUE, prob=weights)
+  mup1=mup1[indices]
+  mup1.list[[i+1]]=mup1  #Save the particle distribution of the current iteration
+  weights=rep(1/N, N)
+  
+  delta=0.1
+  r=1-sqrt(1-(delta^2/var(mup1)))
+  
+  epsilon.i=rnorm(N, mean=0, sd=delta)  
+  mup1=mup1+epsilon.i-r*(mup1-mean(mup1)) 
+
+  mup1.list[[i+1]]=mup1 
+  
+# Update theoretical posterior distribution parameters
+  post.mn[i+1]=(tau0*mu0+i*mean(y[1:i]))/(tau0+i)
+  post.tau[i+1]=tau0+i
+  
+# Draw the detailed distribution of the current iteration
+  hist(mup1, probability=TRUE, xlim=c(-5, 10), main=paste("Iteration", i), xlab="Value", ylab="Density")
+  lines(density(mup1), col='blue')
+  curve(dnorm(x, mean=post.mn[i+1], sd=sqrt(1/post.tau[i+1])), add=TRUE, col='red', lwd=2)
+}
+
+par(mfrow=c(1, 1))
+
+plot(0, 0, type="n", xlim=c(-5, 10), ylim=c(0, 1), xlab="Value", ylab="Density", 
+     main="Cumulative View of Iterations")
+legend("topright", legend=paste("Iteration", 0:5), col=1:6, lty=1)
+# Draw cumulative view
+for (i in 1:length(mup1.list)) {
+  lines(density(mup1.list[[i]],bw=0.1), col=i)
+}
+
+#E(mu|x)
+posterior.mean=mean(mup1.list[[length(mup1.list)]])
+
+# Calculate 95% confidence interval
+ci=quantile(mup1.list[[length(mup1.list)]], c(0.025, 0.975))
+
+cat(sprintf("Final Posterior Mean: %f\n", posterior.mean))
+cat(sprintf("95%% Credible Interval: [%f, %f]\n", ci[1], ci[2]))
+
+
+
+
+
+# Count the number of unique particles in each iteration
+part.in.play=function(x) {
+  length(unique(x))
+}
+
+#apply the function to each element (i.e. the particle distribution of each iteration)
+upcount=sapply(mup1.list, part.in.play)
+
+# Plot the number of unique particles in each iteration
+plot(0:(length(y)), upcount, type='b', pch=16, xlab='Number of Observations', 
+     ylab='Number of Unique Particles',main='Unique Observation')
+
+
+
+ParticleFilter=R6::R6Class(
+  "ParticleFilter",
+  public=list(
+    N=NULL,
+    mup1=NULL,
+    weights=NULL,
+    y=NULL,
+    tau0=NULL,
+    mu0=NULL,
+    post.mn=NULL,
+    post.tau=NULL,
+    mup1.list=NULL,
+    
+    initialize=function(N, y, tau0, mu0) {
+      self$N=N
+      self$mup1=rnorm(N,mean=mu0, sd=1/sqrt(tau0))
+      self$weights=rep(1/N, N)
+      self$y=y
+      self$tau0=tau0
+      self$mu0=mu0
+      self$post.mn=numeric(length(y) + 1)
+      self$post.tau=numeric(length(y) + 1)
+      self$post.mn[1]=mu0
+      self$post.tau[1]=tau0
+      self$mup1.list=list(self$mup1)
+    },
+    
+    updateWeights=function(data) {
+      likelihood=dnorm(data, mean=self$mup1, sd=1)
+      self$weights=self$weights*likelihood
+      self$weights=self$weights/sum(self$weights)
+    },
+    
+    resample = function() {
+      indices = sample(1:self$N, self$N, replace=TRUE, prob=self$weights)
+      self$mup1 = self$mup1[indices]
+      self$weights = rep(1/self$N, self$N)
+      self$mup1.list[[length(self$mup1.list) + 1]] = self$mup1
+    },
+    
+    updatePosterior=function(i) {
+      self$post.mn[i+1]=(self$tau0*self$mu0+i*mean(self$y[1:i]))/(self$tau0 + i)
+      self$post.tau[i+1]=self$tau0+i
+    },
+     calculateCI95 = function() {
+      sorted_mup1 = sort(self$mup1)
+      lower = sorted_mup1[floor(self$N * 0.025)]
+      upper = sorted_mup1[ceiling(self$N * 0.975)]
+      self$ci95[[length(self$ci95) + 1]] = c(lower, upper)
+    },
+    plotDistributions=function() {
+      par(mfrow=c(3, 2))
+      for (i in 1:length(self$y)) {
+        self$updateWeights(self$y[i])
+        self$resample()
+        self$updatePosterior(i)
+        hist(self$mup1, probability=TRUE, xlim=c(-5, 10), main=paste("Iteration", i))
+        lines(density(self$mup1), col='blue')
+        curve(dnorm(x, mean=self$post.mn[i+1], sd=sqrt(1/self$post.tau[i+1])), 
+              add=TRUE, col='red', lwd=2)
+      }
+      par(mfrow=c(1, 1))
+    },
+    
+    plotCumulative=function() {
+      plot(0,0,type="n", xlim=c(-5, 10), ylim=c(0, 1), xlab="Value", ylab="Density", 
+           main="Cumulative View of Iterations")
+      legend("topright", legend=paste("Iteration", 0:5), col=1:6, lty=1)
+      for (i in 1:length(self$mup1.list)) {
+        lines(density(self$mup1.list[[i]],bw=0.1), col=i)
+      }
+    },
+    
+    plotUniqueParticles=function() {
+      part.in.play=function(x) {
+        length(unique(x))
+      }
+      upcount=sapply(self$mup1.list, part.in.play)
+      plot(0:(length(self$y)), upcount, type='b', pch=16, xlab='Number of Observations',
+           ylab='Number of Unique Particles',main='Unique Observation')
+    }
+  )
+)
+
+
+
+
+
+filter=ParticleFilter$new(N=10^6, y=c(5, 2, 3, 1, 5), tau0=0.2, mu0=13)
+filter$plotDistributions()
+filter$plotUniqueParticles()
+
+
+##############################################################################################################section 3.2
+
+
+library(MASS)
+set.seed(9775)
+
+# Particle size
+N=10^4
+
+# Initialize particles
+mup=rnorm(N, mean=2, sd=sqrt(5))
+taup=rgamma(N, shape=1, rate=1)
+
+weights=rep(1/N, N)
+
+# Sample data points for y
+y=c(5,2,3,1,5)
+
+# Create lists to store particle distributions after each iteration
+mup.list=list();taup.list=list()
+
+par(mfrow=c(5,2))
+
+# Function to count unique pairs
+part.in.play=function(mup, taup) {
+  unique.pairs=unique(cbind(mup, taup))
+  nrow(unique.pairs)
+}
+
+# Vector to store the count of unique particles
+upcount=numeric(length(y))
+
+# Iterate over the observations
+for (i in 1:length(y)) {
+  data=y[i]
+  
+  # likelihood
+  likelihood=dnorm(data, mean=mup, sd=sqrt(1/taup))
+  
+  # Update weights
+  weights=weights*likelihood
+  weights=weights/sum(weights)
+  
+  # Resampling
+  indices=sample(1:N, N, replace=TRUE, prob=weights)
+  mup=mup[indices]
+  taup=taup[indices]
+  weights=rep(1/N, N)
+  
+  # Store the distributions
+  mup.list[[i]]=mup
+  taup.list[[i]]=taup
+  
+  # Count the number of unique particles
+  upcount[i]=part.in.play(mup, taup)
+  
+  # Plotting
+  plot(mup, taup, pch=20, cex=0.5, 
+       main=paste("After Observation", i),
+       xlab="mu", ylab="tau", xlim=range(mup), ylim=range(taup))
+  my.kde=kde2d(x=mup,y=taup,n=100)
+  image(my.kde); contour(my.kde, add=TRUE)
+}
+
+cat("mu estimation mean:", mean(mup), "\n")
+cat("mu 95% CI:", quantile(mup, probs=c(0.025, 0.975)), "\n")
+cat("tau estimation mean:", mean(taup), "\n")
+cat("tau 95% CI:", quantile(taup, probs=c(0.025, 0.975)), "\n")
+
+
+
+library(ggplot2)
+
+set.seed(9775)
+N <- 10^4
+
+# Initialize particles
+mup <- rnorm(N, mean = 2, sd = sqrt(5))
+taup <- rgamma(N, shape = 1, rate = 1)
+weights <- rep(1/N, N)
+
+# Sample data points for y
+y <- c(5, 2, 3, 1, 5)
+
+# Dataframe for storing results
+results <- data.frame()
+
+# Iterate over the observations
+for (i in 1:length(y)) {
+  data <- y[i]
+  
+  # likelihood
+  likelihood <- dnorm(data, mean = mup, sd = sqrt(1/taup))
+  
+  # Update weights
+  weights <- weights * likelihood
+  weights <- weights / sum(weights)
+  
+  # Resampling
+  indices <- sample(1:N, N, replace = TRUE, prob = weights)
+  mup <- mup[indices]
+  taup <- taup[indices]
+  weights <- rep(1/N, N)
+  
+  # Store the results
+  iter_results <- data.frame(mup = mup, taup = taup, Iteration = as.factor(i))
+  results <- rbind(results, iter_results)
+}
+
+# Plotting with ggplot2
+ggplot(results, aes(x = expression(mu), y = taup)) +
+  stat_density_2d(aes(fill = ..density..), geom = "tile", contour = FALSE) +
+  facet_wrap(~Iteration) +
+  scale_fill_gradientn(colours = rainbow(10)) +
+  ggtitle("Density Plot")+
+  theme_minimal()
+
+par(mfrow=c(1,1))
+# Plot the number of unique particles
+plot(1:length(y), upcount, type='b', pch=16, xlab='Number of Observations', 
+     ylab='Number of Unique Particles', main='Unique Particles over Observations')
+
+
+
+data {
+    int<lower=0> N;          // number of data points
+    vector[N] y;             // data
+}
+parameters {
+    real mu;                 // parameter mu
+    real<lower=0> tau;       // parameter tau
+}
+model {
+    // Priors
+    mu~normal(2,sqrt(5));
+    tau~gamma(1,1);
+
+    // Likelihood
+    y~normal(mu,sqrt(1/tau));
+}
+
+
+
+library(rstan)
+
+data.list=list(N=length(y), y=y)
+
+# Run MCMC sampling
+fit=stan(file='stan_model.stan', data=data.list, iter=1000, chains=4,verbose=F)
+
+# Extract samples
+samples=extract(fit)
+
+par(mfrow = c(1, 1))
+hist(mup, prob = TRUE, main=expression(paste('Marginal Density of ',mu)), 
+     xlab = expression(mu), ylim = c(0, 0.6))
+lines(density(samples$mu),col='red', main=expression(paste('Marginal Density of ',mu)), xlab = "mu", ylim = c(0, 0.6),lwd=2)
+hist(taup, prob = TRUE, main=expression(paste('Marginal Density of ',tau)), 
+     xlab = expression(tau), xlim = c(0, 1.5), ylim = c(0, 2))
+lines(density(samples$tau),col='red', main = "Marginal Density of tau (MCMC)", 
+     xlab = "tau", xlim = c(0, 1.5), ylim = c(0, 2),lwd=2)
+```
+
+
+
+
+
+
+
+
+
+
+
